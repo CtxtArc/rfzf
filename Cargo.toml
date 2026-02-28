@@ -1,0 +1,13 @@
+[package]
+name = "rust-fzf"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.5.60", features = ["derive"] }
+crossterm = "0.29.0"
+ignore = "0.4.25"
+nucleo = "0.5.0"
+ratatui = "0.30.0"
+syntect = "5.3.0"
+walkdir = "2.5.0"
