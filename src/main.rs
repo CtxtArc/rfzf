@@ -28,6 +28,8 @@ struct Args {
     preview: bool,
     #[arg(short, long)]
     relative: bool,
+    #[arg(short = 's', long)]
+    sensitive: bool,
 }
 
 #[derive(Clone)]
@@ -113,6 +115,7 @@ pub struct App {
     theme_list_state: ListState,
     relative: bool,
     base_path: PathBuf,
+    case_sensitive: bool,
 }
 
 fn main() -> std::io::Result<()> {
@@ -178,6 +181,7 @@ fn main() -> std::io::Result<()> {
         theme_list_state: ListState::default(),
         relative: args.relative,
         base_path,
+        case_sensitive: args.sensitive,
     };
 
     let result = app.run(&mut terminal);
@@ -276,6 +280,10 @@ impl App {
             KeyCode::Char('r') if ctrl_only => {
                 self.relative = !self.relative;
             }
+            KeyCode::Char('s') if ctrl_only => {
+                self.case_sensitive = !self.case_sensitive;
+                self.update_search();
+            }
             KeyCode::Enter => {
                 let snapshot = self.matcher.snapshot();
                 if let Some(i) = self.list_state.selected() {
@@ -322,7 +330,7 @@ impl App {
 
     fn update_search(&mut self) {
         let can_append = self.input.starts_with(&self.previous_input);
-        let case_matching = if self.input.chars().any(|c| c.is_uppercase()) {
+        let case_matching = if self.case_sensitive {
             nucleo::pattern::CaseMatching::Respect
         } else {
             nucleo::pattern::CaseMatching::Ignore
@@ -467,6 +475,23 @@ impl App {
                 " Rel ON "
             } else {
                 " Rel OFF "
+            })
+            .fg(t.fg),
+            Span::styled(
+                " Ctrl-S ",
+                Style::default()
+                    .bg(if self.case_sensitive {
+                        Color::Red
+                    } else {
+                        Color::DarkGray
+                    })
+                    .fg(Color::Black)
+                    .bold(),
+            ),
+            Span::raw(if self.case_sensitive {
+                " Case SEN "
+            } else {
+                " Case INS "
             })
             .fg(t.fg),
         ]);

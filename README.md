@@ -5,7 +5,7 @@ A high-performance, interactive terminal fuzzy finder built with **Rust**. It fe
 ## ✨ Features
 
 * **⚡ Parallel Enumeration**: Uses `ignore` (the engine behind `ripgrep`) to scan millions of files in parallel, respecting `.gitignore` and hidden file rules.
-* **🎯 Smart-Case Matching**: Search is case-insensitive by default but automatically switches to case-sensitive if you type an uppercase letter.
+* **🎯 Smart-Case Matching**: Search is case-insensitive by default but can be toggled.
 * **🎨 Live Theming**: Switch between **Nord**, **Dracula**, and **Catppuccin** on the fly with a dedicated UI menu.
 * **📖 Stateful Preview**: Code previews with syntax highlighting powered by `syntect`, using a frame-aware cache for buttery-smooth scrolling.
 * **📟 Reactive Governor**: Smart rendering logic that provides 60 FPS for user input while throttling background discovery to prevent terminal flicker.
@@ -20,6 +20,7 @@ A high-performance, interactive terminal fuzzy finder built with **Rust**. It fe
 | `Ctrl + p` | Toggle **File Preview** |
 | `Ctrl + u` | Clear search input |
 | `Ctrl + r` | Toggle relative filepath |
+| `Ctrl + s` | Toggle case-sensitive|
 | `Up / Down` | Navigate file list (or scroll Preview if open) |
 | `Enter` | Select file and exit (prints path to stdout) |
 | `Esc` | Quit |
