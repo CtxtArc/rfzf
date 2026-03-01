@@ -1,7 +1,9 @@
 [package]
 name = "rust-fzf"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
+license = "MIT"
+author = "dark0dex"
 
 [dependencies]
 clap = { version = "4.5.60", features = ["derive"] }

@@ -1,16 +1,19 @@
 # 🚀 Rust-FZF: Blazingly Fast Fuzzy Finder
 
-A high-performance, interactive terminal fuzzy finder built with **Rust**. It features multi-threaded file discovery, a reactive UI governor for zero-flicker rendering, and powerful shell integration.
+**Rust-FZF** is a high-performance, interactive TUI fuzzy finder engineered for speed and extensibility. Designed to handle millions of entries without breaking a sweat, it combines the parallel discovery power of `ripgrep` with a sophisticated, reactive UI and full shell pipeline support.
+
+---
 
 ## ✨ Features
 
-* **⚡ Parallel Enumeration**: Uses `ignore` (the engine behind `ripgrep`) to scan millions of files in parallel, respecting `.gitignore` and hidden file rules.
-* **🖇️ Interactive Exec**: Pipe results directly into terminal commands using the `--exec` flag. Supports complex shell pipelines with `|`, `>`, and redirects.
-* **✅ Multi-Selection**: Mark multiple files using `Tab` to perform batch operations.
-* **🎯 Manual & Smart Case**: Toggle between case-sensitive and case-insensitive matching on the fly.
-* **🎨 Live Theming**: Switch between **Nord**, **Dracula**, and **Catppuccin** palettes instantly.
-* **📖 Stateful Preview**: Syntax-highlighted code previews powered by `syntect`, with frame-aware caching for smooth scrolling.
-* **📟 Reactive Governor**: Smart rendering logic providing 60 FPS for input while throttling background discovery to maintain performance.
+* **⚡ Parallel Discovery Engine**: Built on the `ignore` crate (the core of `ripgrep`), scanning files across all CPU cores while respecting `.gitignore`, `.ignore`, and hidden file rules.
+* **🖇️ Deep Shell Integration**: The `--exec` flag turns your finder into a command composer. Supports full shell syntax, including pipes (`|`), redirects (`>`), and complex one-liners.
+* **✅ Multi-Selection Workflow**: Press `Tab` to mark multiple files for batch processing. Selected paths are handed off to your shell command or printed as a clean list.
+* **🔍 Fuzzy Match Highlighting**: Real-time visual feedback! Characters matched by the fuzzy engine are highlighted and underlined within the filename.
+* **📊 Contextual Metadata Sidebar**: Instant access to file size, Unix permissions, and "time-ago" modification stamps within the preview pane.
+* **🎯 Dynamic Case Matching**: Toggle between case-sensitive and smart-case matching instantly without restarting your search.
+* **🎨 Designer Themes**: Beautiful, pre-configured palettes including **Nord**, **Dracula**, and **Catppuccin** with a live-switch menu.
+* **📟 Reactive UI Governor**: A smart rendering engine that prioritizes 60 FPS for user input while intelligently throttling background discovery updates to eliminate terminal flicker.
 
 ---
 
@@ -19,14 +22,59 @@ A high-performance, interactive terminal fuzzy finder built with **Rust**. It fe
 | Key | Action |
 | --- | --- |
 | `Tab` | **Toggle selection** (Multi-select mode) |
+| `Enter` | **Execute** command on selection (or print to stdout) |
+| `Ctrl + p` | Toggle **Live Preview** & Metadata Sidebar |
 | `Ctrl + t` | Open **Theme Selection** menu |
-| `Ctrl + p` | Toggle **File Preview** |
-| `Ctrl + r` | Toggle **Relative / Absolute** path display |
 | `Ctrl + s` | Toggle **Case Sensitivity** |
-| `Ctrl + u` | Clear search input |
-| `Up / Down` | Navigate list (or scroll Preview if open) |
-| `Enter` | Execute command on selection (or print to stdout) |
+| `Ctrl + r` | Toggle **Relative / Absolute** path display |
+| `Ctrl + u` | **Clear** search input |
+| `Up / Down` | Navigate list (scrolls Preview text when preview is open) |
 | `Esc` | Quit |
+
+---
+
+## 🚀 Usage
+
+### 🔍 Discovery
+
+Search the current directory:
+
+```bash
+rfzf
+
+```
+
+Search your home directory with hidden files and preview enabled:
+
+```bash
+rfzf ~ --hidden --preview
+
+```
+
+### 🛠️ The Power of `--exec`
+
+Pass selections into any terminal command. The `{}` placeholder is safely escaped for the shell.
+
+**Interactive File Editing:**
+
+```bash
+rfzf --exec "nvim {}"
+
+```
+
+**Advanced Content Pipelines:**
+
+```bash
+rfzf --exec "grep 'TODO' {} | head -n 20"
+
+```
+
+**Bulk File Management:**
+
+```bash
+rfzf --exec "cp {} ~/backups/archive_$(date +%F)/"
+
+```
 
 ---
 
@@ -34,93 +82,45 @@ A high-performance, interactive terminal fuzzy finder built with **Rust**. It fe
 
 ### Prerequisites
 
-Ensure you have the Rust toolchain installed.
+Ensure you have the [Rust toolchain](https://rustup.rs/) installed.
 
 ```bash
 # Clone the repository
 git clone https://github.com/skugge74/rust-fzf
 cd rust-fzf
 
-# Build for release with optimizations
+# Build the highly-optimized release binary
 cargo build --release
 
-# Install to your path
+# Move to your local bin path
 sudo cp target/release/rust-fzf /usr/local/bin/rfzf
 
 ```
 
 ---
 
-## 🚀 Usage
+## ⚙️ Technical Details
 
-### Basic Search
-
-Scan the current directory:
-
-```bash
-rfzf
-
-```
-
-### Advanced Discovery
-
-Scan your home folder with hidden files and preview enabled:
-
-```bash
-rfzf ~ --hidden --preview
-
-```
-
-### 🛠️ Shell Integration (The Power User Move)
-
-The `--exec` flag allows you to pass selections into any terminal command. Use `{}` as a placeholder for the file path.
-
-**Open multiple selected files in Neovim:**
-
-```bash
-rfzf --exec "nvim {}"
-
-```
-
-**Search content within found files and limit output:**
-
-```bash
-rfzf --exec "grep 'TODO' {} | head -n 20"
-
-```
-
-**Batch copy selected files to a backup directory:**
-
-```bash
-rfzf --exec "cp {} ~/backups/"
-
-```
+* **TUI Engine**: Powered by `ratatui` for a stateful, modern terminal interface.
+* **Fuzzy Logic**: `nucleo-matcher` provides high-performance, index-aware matching.
+* **Syntax Highlighting**: `syntect` using Sublime-compatible definitions for professional-grade code previews.
+* **Execution Layer**: Commands are spawned via `sh -c`, enabling full shell-native features (pipes, variables, and logic).
 
 ---
 
 ## 🎨 Themes Included
 
-* **Nord**: A clean, arctic-blue aesthetic.
-* **Dracula**: A high-contrast, vibrant dark theme.
-* **Catppuccin**: A soothing, pastel-themed palette.
+* **Nord**: Arctic-cold blues for focused work.
+* **Dracula**: High-contrast vibrant colors for dark-room hackers.
+* **Catppuccin**: A soothing, modern pastel aesthetic.
 
 ---
 
-## ⚙️ Technical Details
+## ✅ Completed Roadmap
 
-* **TUI Framework**: `ratatui`
-* **Fuzzy Engine**: `nucleo` (High-performance matching indices)
-* **Concurrency**: `ignore` for lock-free parallel file injection.
-* **Syntax Highlighting**: `syntect` (Sublime-compatible definitions).
-* **Execution**: Commands are spawned via `sh -c` to support full shell syntax and piping.
-
----
-
-### Roadmap
-
-* [x] Interactive shell integration
-* [x] Multi-selection mode
-* [ ] File metadata sidebar (Size, Permissions, Modified)
-
----
+* [x] **Multi-threaded parallel file walker**
+* [x] **Interactive shell integration (`--exec`)**
+* [x] **Stateful multi-selection mode (`Tab`)**
+* [x] **Live metadata sidebar (Size, Date, Perms)**
+* [x] **Custom Theme Engine**
 

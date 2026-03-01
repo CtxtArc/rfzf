@@ -13,7 +13,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
@@ -169,7 +169,7 @@ fn main() -> std::io::Result<()> {
         input: String::new(),
         last_input_time: Instant::now(),
         needs_reparse: false,
-        show_preview: false,
+        show_preview: args.preview,
         preview_scroll: 0,
         previous_input: String::new(),
         frame_count: 0,
@@ -193,6 +193,54 @@ fn main() -> std::io::Result<()> {
 }
 
 impl App {
+    fn format_size(bytes: u64) -> String {
+        if bytes < 1024 {
+            return format!("{} B", bytes);
+        }
+        let kib = bytes as f64 / 1024.0;
+        if kib < 1024.0 {
+            return format!("{:.1} KB", kib);
+        }
+        let mib = kib / 1024.0;
+        format!("{:.1} MB", mib)
+    }
+
+    fn format_time(time: SystemTime) -> String {
+        match time.elapsed() {
+            Ok(elapsed) => {
+                let secs = elapsed.as_secs();
+                if secs < 60 {
+                    format!("{}s ago", secs)
+                } else if secs < 3600 {
+                    format!("{}m ago", secs / 60)
+                } else if secs < 86400 {
+                    format!("{}h ago", secs / 3600)
+                } else {
+                    format!("{}d ago", secs / 86400)
+                }
+            }
+            Err(_) => "Unknown".to_string(),
+        }
+    }
+
+    #[cfg(unix)]
+    fn format_perms(mode: u32) -> String {
+        let rwx = |m: u32| {
+            format!(
+                "{}{}{}",
+                if m & 4 != 0 { "r" } else { "-" },
+                if m & 2 != 0 { "w" } else { "-" },
+                if m & 1 != 0 { "x" } else { "-" }
+            )
+        };
+        format!(
+            "{}{}{}",
+            rwx((mode >> 6) & 7),
+            rwx((mode >> 3) & 7),
+            rwx(mode & 7)
+        )
+    }
+
     fn run(&mut self, terminal: &mut DefaultTerminal) -> std::io::Result<()> {
         let mut last_draw = Instant::now();
         while !self.exit {
@@ -216,7 +264,6 @@ impl App {
 
             let now = Instant::now();
             let elapsed = now.duration_since(last_draw);
-
             let should_draw = if user_active {
                 true
             } else if status.running || status.changed {
@@ -301,7 +348,6 @@ impl App {
             KeyCode::Enter => {
                 let snapshot = self.matcher.snapshot();
                 let mut final_paths = Vec::new();
-
                 if !self.selected_paths.is_empty() {
                     final_paths.extend(self.selected_paths.clone());
                 } else if let Some(i) = self.list_state.selected() {
@@ -312,16 +358,11 @@ impl App {
 
                 if !final_paths.is_empty() {
                     let _ = ratatui::restore();
-
                     if let Some(cmd_template) = &self.exec_cmd {
                         for path in final_paths {
-                            // Replace {} with the path and escape it for the shell
-                            // Wrapping path in single quotes handles spaces reliably
                             let escaped_path = path.replace("'", "'\\''");
                             let actual_script =
                                 cmd_template.replace("{}", &format!("'{}'", escaped_path));
-
-                            // Execute via the system shell to support pipes (|) and redirects (>)
                             let _ = std::process::Command::new("sh")
                                 .arg("-c")
                                 .arg(&actual_script)
@@ -391,6 +432,7 @@ impl App {
         self.frame_count = self.frame_count.wrapping_add(1);
         let t = self.theme.clone();
         let area = frame.area();
+        let _status = self.matcher.tick(0);
         let snapshot = self.matcher.snapshot();
         let matched = snapshot.matched_item_count();
 
@@ -400,8 +442,6 @@ impl App {
             Constraint::Length(1),
         ])
         .split(area);
-
-        // Spinner Logic using Theme Header color
         let spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         let spinner = spinner_chars[(self.frame_count / 2) % 10];
 
@@ -537,20 +577,79 @@ impl App {
                         self.preview_cache = self.read_file_preview_colored(item.data);
                         self.last_selected_index = Some(i);
                     }
-                    let p_area = self.centered_rect(85, 80, area);
+                    let p_area = self.centered_rect(95, 85, area);
+                    frame.render_widget(Clear, p_area);
+
+                    // SIDEBAR SPLIT: 80% Code, 20% Metadata
+                    let p_chunks = Layout::horizontal([
+                        Constraint::Percentage(80),
+                        Constraint::Percentage(20),
+                    ])
+                    .split(p_area);
+
+                    // 1. File Content Preview
                     let block = Block::default()
                         .title(format!(" Preview: {} ", item.data))
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(t.header))
                         .bg(t.bg);
-                    frame.render_widget(Clear, p_area);
                     frame.render_widget(
                         Paragraph::new(self.preview_cache.clone())
                             .block(block)
                             .scroll((self.preview_scroll, 0))
                             .wrap(Wrap { trim: false }),
-                        p_area,
+                        p_chunks[0],
                     );
+
+                    // 2. Metadata Sidebar (ZERO COST SEARCH)
+                    if let Ok(meta) = std::fs::metadata(item.data) {
+                        let info = vec![
+                            Line::from(vec![Span::styled(
+                                " SIZE ",
+                                Style::default().bg(Color::Cyan).fg(Color::Black).bold(),
+                            )]),
+                            Line::from(format!("  {}", Self::format_size(meta.len()))),
+                            Line::from(""),
+                            Line::from(vec![Span::styled(
+                                " MODIFIED ",
+                                Style::default().bg(Color::Green).fg(Color::Black).bold(),
+                            )]),
+                            Line::from(format!(
+                                "  {}",
+                                meta.modified()
+                                    .map(Self::format_time)
+                                    .unwrap_or_else(|_| "N/A".to_string())
+                            )),
+                            Line::from(""),
+                            Line::from(vec![Span::styled(
+                                " MODE ",
+                                Style::default().bg(Color::Yellow).fg(Color::Black).bold(),
+                            )]),
+                            #[cfg(unix)]
+                            Line::from(format!("  {}", {
+                                use std::os::unix::fs::PermissionsExt;
+                                Self::format_perms(meta.permissions().mode())
+                            })),
+                            #[cfg(not(unix))]
+                            Line::from(format!(
+                                "  {}",
+                                if meta.permissions().readonly() {
+                                    "r--r--r--"
+                                } else {
+                                    "rw-r--r--"
+                                }
+                            )),
+                        ];
+                        frame.render_widget(
+                            Paragraph::new(info).block(
+                                Block::default()
+                                    .borders(Borders::ALL)
+                                    .title(" Info ")
+                                    .border_style(Style::default().fg(t.matched_count)),
+                            ),
+                            p_chunks[1],
+                        );
+                    }
                 }
             }
         }
