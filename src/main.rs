@@ -314,18 +314,18 @@ impl App {
                     let _ = ratatui::restore();
 
                     if let Some(cmd_template) = &self.exec_cmd {
-                        // INTERACTIVE SHELL LOGIC
                         for path in final_paths {
-                            let actual_cmd = cmd_template.replace("{}", &path);
-                            let parts: Vec<&str> = actual_cmd.split_whitespace().collect();
-                            if !parts.is_empty() {
-                                let _ = std::process::Command::new(parts[0])
-                                    .args(&parts[1..])
+                            // Split the template to get the base command (e.g., "cat" or "nvim")
+                            // but pass the path as a single, un-split argument.
+                            let base_cmd = cmd_template.replace("{}", "").trim().to_string();
+
+                            if !base_cmd.is_empty() {
+                                let _ = std::process::Command::new(&base_cmd)
+                                    .arg(&path) // This preserves spaces!
                                     .status();
                             }
                         }
                     } else {
-                        // Standard output mode
                         for path in final_paths {
                             println!("{}", path);
                         }
