@@ -315,15 +315,17 @@ impl App {
 
                     if let Some(cmd_template) = &self.exec_cmd {
                         for path in final_paths {
-                            // Split the template to get the base command (e.g., "cat" or "nvim")
-                            // but pass the path as a single, un-split argument.
-                            let base_cmd = cmd_template.replace("{}", "").trim().to_string();
+                            // Replace {} with the path and escape it for the shell
+                            // Wrapping path in single quotes handles spaces reliably
+                            let escaped_path = path.replace("'", "'\\''");
+                            let actual_script =
+                                cmd_template.replace("{}", &format!("'{}'", escaped_path));
 
-                            if !base_cmd.is_empty() {
-                                let _ = std::process::Command::new(&base_cmd)
-                                    .arg(&path) // This preserves spaces!
-                                    .status();
-                            }
+                            // Execute via the system shell to support pipes (|) and redirects (>)
+                            let _ = std::process::Command::new("sh")
+                                .arg("-c")
+                                .arg(&actual_script)
+                                .status();
                         }
                     } else {
                         for path in final_paths {
