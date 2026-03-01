@@ -11,3 +11,10 @@ nucleo = "0.5.0"
 ratatui = "0.30.0"
 syntect = "5.3.0"
 walkdir = "2.5.0"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = 'abort'
+strip = true

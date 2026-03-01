@@ -8,6 +8,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{DefaultTerminal, Frame};
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
@@ -30,6 +31,12 @@ struct Args {
     relative: bool,
     #[arg(short = 's', long)]
     sensitive: bool,
+    #[arg(
+        short = 'e',
+        long,
+        help = "Command to execute on selection (e.g. 'nvim {}')"
+    )]
+    exec: Option<String>,
 }
 
 #[derive(Clone)]
@@ -41,7 +48,6 @@ struct AppTheme {
     selection_bg: Color,
     selection_fg: Color,
     cursor: Color,
-    spinner: Color,
     footer_bg: Color,
     matched_count: Color,
     syntect_theme: &'static str,
@@ -57,7 +63,6 @@ impl AppTheme {
             selection_bg: Color::Rgb(76, 86, 106),
             selection_fg: Color::Rgb(143, 188, 187),
             cursor: Color::Rgb(136, 192, 208),
-            spinner: Color::Yellow,
             footer_bg: Color::Rgb(59, 66, 82),
             matched_count: Color::Rgb(76, 86, 106),
             syntect_theme: "base16-ocean.dark",
@@ -72,7 +77,6 @@ impl AppTheme {
             selection_bg: Color::Rgb(68, 71, 90),
             selection_fg: Color::Rgb(80, 250, 123),
             cursor: Color::Rgb(255, 121, 198),
-            spinner: Color::Rgb(241, 250, 140),
             footer_bg: Color::Rgb(33, 34, 44),
             matched_count: Color::Rgb(98, 114, 164),
             syntect_theme: "base16-mocha.dark",
@@ -87,7 +91,6 @@ impl AppTheme {
             selection_bg: Color::Rgb(49, 50, 68),
             selection_fg: Color::Rgb(245, 194, 231),
             cursor: Color::Rgb(166, 227, 161),
-            spinner: Color::Rgb(250, 179, 135),
             footer_bg: Color::Rgb(17, 17, 27),
             matched_count: Color::Rgb(108, 112, 134),
             syntect_theme: "base16-ocean.dark",
@@ -116,6 +119,8 @@ pub struct App {
     relative: bool,
     base_path: PathBuf,
     case_sensitive: bool,
+    selected_paths: HashSet<String>,
+    exec_cmd: Option<String>,
 }
 
 fn main() -> std::io::Result<()> {
@@ -133,19 +138,15 @@ fn main() -> std::io::Result<()> {
         builder
             .hidden(!args.hidden)
             .git_ignore(true)
-            .threads(std::cmp::min(8, logical_cores));
+            .threads(logical_cores.min(8));
         builder.build_parallel().run(|| {
             let local_injector = injector.clone();
             let mut batch = Vec::with_capacity(5000);
             Box::new(move |result| {
                 if let Ok(entry) = result {
                     if entry.file_type().map(|f| f.is_file()).unwrap_or(false) {
-                        if let Ok(abs_path) = std::fs::canonicalize(entry.path()) {
-                            batch.push(abs_path.to_string_lossy().into_owned());
-                        } else {
-                            batch.push(entry.path().to_string_lossy().into_owned());
-                        }
-
+                        let path_str = entry.path().to_string_lossy().into_owned();
+                        batch.push(path_str);
                         if batch.len() >= 5000 {
                             for path in batch.drain(..) {
                                 local_injector.push(path, |s, dst| {
@@ -182,6 +183,8 @@ fn main() -> std::io::Result<()> {
         relative: args.relative,
         base_path,
         case_sensitive: args.sensitive,
+        selected_paths: HashSet::new(),
+        exec_cmd: args.exec,
     };
 
     let result = app.run(&mut terminal);
@@ -196,7 +199,7 @@ impl App {
             let status = self.matcher.tick(0);
             let mut user_active = false;
 
-            if event::poll(Duration::from_millis(1))? {
+            if event::poll(Duration::from_millis(5))? {
                 if let event::Event::Key(key) = event::read()? {
                     if key.kind == KeyEventKind::Press {
                         self.handle_input(key);
@@ -205,7 +208,7 @@ impl App {
                 }
             }
 
-            if self.needs_reparse && self.last_input_time.elapsed() > Duration::from_millis(10) {
+            if self.needs_reparse && self.last_input_time.elapsed() > Duration::from_millis(20) {
                 self.update_search();
                 self.needs_reparse = false;
                 user_active = true;
@@ -213,12 +216,13 @@ impl App {
 
             let now = Instant::now();
             let elapsed = now.duration_since(last_draw);
+
             let should_draw = if user_active {
                 true
             } else if status.running || status.changed {
                 elapsed > Duration::from_millis(33)
             } else {
-                elapsed > Duration::from_millis(200)
+                elapsed > Duration::from_millis(250)
             };
 
             if should_draw {
@@ -235,8 +239,7 @@ impl App {
 
         if self.show_theme_menu {
             match key.code {
-                KeyCode::Esc => self.show_theme_menu = false,
-                KeyCode::Char('t') if ctrl_only => self.show_theme_menu = false,
+                KeyCode::Esc | KeyCode::Char('t') if ctrl_only => self.show_theme_menu = false,
                 KeyCode::Up => {
                     let i = self.theme_list_state.selected().unwrap_or(0);
                     self.theme_list_state.select(Some(i.saturating_sub(1)));
@@ -284,16 +287,51 @@ impl App {
                 self.case_sensitive = !self.case_sensitive;
                 self.update_search();
             }
-            KeyCode::Enter => {
+            KeyCode::Tab | KeyCode::BackTab => {
                 let snapshot = self.matcher.snapshot();
                 if let Some(i) = self.list_state.selected() {
                     if let Some(item) = snapshot.get_matched_item(i as u32) {
-                        let res = item.data.clone();
-                        let _ = ratatui::restore();
-                        println!("{}", res);
-                        std::process::exit(0);
+                        let path = item.data.to_string();
+                        if !self.selected_paths.remove(&path) {
+                            self.selected_paths.insert(path);
+                        }
                     }
                 }
+            }
+            KeyCode::Enter => {
+                let snapshot = self.matcher.snapshot();
+                let mut final_paths = Vec::new();
+
+                if !self.selected_paths.is_empty() {
+                    final_paths.extend(self.selected_paths.clone());
+                } else if let Some(i) = self.list_state.selected() {
+                    if let Some(item) = snapshot.get_matched_item(i as u32) {
+                        final_paths.push(item.data.to_string());
+                    }
+                }
+
+                if !final_paths.is_empty() {
+                    let _ = ratatui::restore();
+
+                    if let Some(cmd_template) = &self.exec_cmd {
+                        // INTERACTIVE SHELL LOGIC
+                        for path in final_paths {
+                            let actual_cmd = cmd_template.replace("{}", &path);
+                            let parts: Vec<&str> = actual_cmd.split_whitespace().collect();
+                            if !parts.is_empty() {
+                                let _ = std::process::Command::new(parts[0])
+                                    .args(&parts[1..])
+                                    .status();
+                            }
+                        }
+                    } else {
+                        // Standard output mode
+                        for path in final_paths {
+                            println!("{}", path);
+                        }
+                    }
+                }
+                std::process::exit(0);
             }
             KeyCode::Up => {
                 if self.show_preview && self.preview_scroll > 0 {
@@ -351,7 +389,6 @@ impl App {
         self.frame_count = self.frame_count.wrapping_add(1);
         let t = self.theme.clone();
         let area = frame.area();
-        let status = self.matcher.tick(0);
         let snapshot = self.matcher.snapshot();
         let matched = snapshot.matched_item_count();
 
@@ -362,22 +399,15 @@ impl App {
         ])
         .split(area);
 
-        let spinner =
-            ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"][(self.frame_count / 2) % 10];
-        let loading = if status.running {
-            Span::styled(
-                format!(" {}", spinner),
-                Style::default().fg(t.spinner).bold(),
-            )
-        } else {
-            Span::raw("  ")
-        };
+        // Spinner Logic using Theme Header color
+        let spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let spinner = spinner_chars[(self.frame_count / 2) % 10];
 
         frame.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled("> ", Style::default().fg(t.header).bold()),
                 Span::raw(&self.input).fg(t.fg),
-                loading,
+                Span::styled(format!(" {} ", spinner), Style::default().fg(t.header)),
                 Span::styled(
                     format!(" ({}/{})", matched, snapshot.item_count()),
                     Style::default().fg(t.matched_count),
@@ -386,11 +416,12 @@ impl App {
             chunks[0],
         );
 
-        let items = snapshot
+        let list_items = snapshot
             .matched_items(0..matched.min(chunks[1].height as u32))
             .map(|item| {
                 let full_path = item.data.as_str();
-                let (icon, color) = self.get_icon_info(full_path);
+                let is_selected = self.selected_paths.contains(full_path);
+                let (icon, icon_color) = self.get_icon_info(full_path);
 
                 let path_to_show = if self.relative {
                     std::path::Path::new(full_path)
@@ -401,26 +432,35 @@ impl App {
                     full_path.to_string()
                 };
 
+                let sel_indicator = if is_selected {
+                    Span::styled("󰄬 ", Style::default().fg(Color::Green).bold())
+                } else {
+                    Span::raw("  ")
+                };
+
                 let line = match path_to_show.rfind('/') {
-                    Some(idx) => {
-                        let dir = path_to_show[..idx + 1].to_string();
-                        let file = path_to_show[idx + 1..].to_string();
-                        Line::from(vec![
-                            Span::styled(format!("{} ", icon), Style::default().fg(color)),
-                            Span::styled(dir, Style::default().fg(t.matched_count)),
-                            Span::styled(file, Style::default().fg(t.fg).bold()),
-                        ])
-                    }
+                    Some(idx) => Line::from(vec![
+                        sel_indicator,
+                        Span::styled(format!("{} ", icon), Style::default().fg(icon_color)),
+                        Span::styled(
+                            path_to_show[..idx + 1].to_string(),
+                            Style::default().fg(t.matched_count),
+                        ),
+                        Span::styled(
+                            path_to_show[idx + 1..].to_string(),
+                            Style::default().fg(t.fg).bold(),
+                        ),
+                    ]),
                     None => Line::from(vec![
-                        Span::styled(format!("{} ", icon), Style::default().fg(color)),
+                        sel_indicator,
+                        Span::styled(format!("{} ", icon), Style::default().fg(icon_color)),
                         Span::styled(path_to_show, Style::default().fg(t.fg).bold()),
                     ]),
                 };
-
                 ListItem::new(line)
             });
 
-        let list = List::new(items)
+        let list = List::new(list_items)
             .highlight_style(
                 Style::default()
                     .bg(t.selection_bg)
@@ -438,12 +478,17 @@ impl App {
                     .fg(Color::Black)
                     .bold(),
             ),
-            Span::raw(" Quit  ").fg(t.fg),
+            Span::raw(" Quit "),
+            Span::styled(
+                " TAB ",
+                Style::default().bg(t.header).fg(Color::Black).bold(),
+            ),
+            Span::raw(format!(" Sel({}) ", self.selected_paths.len())).fg(t.fg),
             Span::styled(
                 " Ctrl-T ",
                 Style::default().bg(t.header).fg(Color::Black).bold(),
             ),
-            Span::raw(" Themes  ").fg(t.fg),
+            Span::raw(" Theme "),
             Span::styled(
                 " Ctrl-P ",
                 Style::default()
@@ -451,15 +496,7 @@ impl App {
                     .fg(Color::Black)
                     .bold(),
             ),
-            Span::raw(" Preview  ").fg(t.fg),
-            Span::styled(
-                " Ctrl-U ",
-                Style::default()
-                    .bg(Color::Rgb(180, 142, 173))
-                    .fg(Color::Black)
-                    .bold(),
-            ),
-            Span::raw(" Clear  ").fg(t.fg),
+            Span::raw(" Prev "),
             Span::styled(
                 " Ctrl-R ",
                 Style::default()
@@ -471,17 +508,12 @@ impl App {
                     .fg(Color::Black)
                     .bold(),
             ),
-            Span::raw(if self.relative {
-                " Rel ON "
-            } else {
-                " Rel OFF "
-            })
-            .fg(t.fg),
+            Span::raw(if self.relative { " Rel " } else { " Abs " }),
             Span::styled(
                 " Ctrl-S ",
                 Style::default()
                     .bg(if self.case_sensitive {
-                        Color::Red
+                        Color::LightRed
                     } else {
                         Color::DarkGray
                     })
@@ -489,11 +521,10 @@ impl App {
                     .bold(),
             ),
             Span::raw(if self.case_sensitive {
-                " Case SEN "
+                " Sen "
             } else {
-                " Case INS "
-            })
-            .fg(t.fg),
+                " Ins "
+            }),
         ]);
         frame.render_widget(Paragraph::new(footer).bg(t.footer_bg), chunks[2]);
 
@@ -523,7 +554,7 @@ impl App {
         }
 
         if self.show_theme_menu {
-            let t_area = self.centered_rect(30, 30, area);
+            let t_area = self.centered_rect(30, 35, area);
             frame.render_widget(Clear, t_area);
             let themes = vec![
                 ListItem::new("Nord"),

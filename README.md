@@ -85,3 +85,9 @@ nvim $(rfzf)
 * **Concurrency**: Uses `ignore` for lock-free parallel file injection.
 * **Syntax Highlighting**: Powered by `syntect` using Sublime-compatible definitions.
 
+
+- [x] TODO: interactive shell integration: `rfzf --exec "nvim {}"`
+- [x] TODO: multi selection mode
+- [ ] TODO: file metadata sidebar
+- [ ] TODO: fuzzy match highlighting
+- [ ] TODO: --preview is useless now (only as an arg)
