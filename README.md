@@ -19,6 +19,7 @@ A high-performance, interactive terminal fuzzy finder built with **Rust**. It fe
 | `Ctrl + t` | Open **Theme Selection** menu |
 | `Ctrl + p` | Toggle **File Preview** |
 | `Ctrl + u` | Clear search input |
+| `Ctrl + r` | Toggle relative filepath |
 | `Up / Down` | Navigate file list (or scroll Preview if open) |
 | `Enter` | Select file and exit (prints path to stdout) |
 | `Esc` | Quit |
