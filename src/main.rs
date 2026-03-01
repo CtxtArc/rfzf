@@ -10,6 +10,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use ratatui::{DefaultTerminal, Frame};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use syntect::easy::HighlightLines;
@@ -25,6 +26,8 @@ struct Args {
     hidden: bool,
     #[arg(short, long)]
     preview: bool,
+    #[arg(short, long)]
+    relative: bool,
 }
 
 #[derive(Clone)]
@@ -108,10 +111,13 @@ pub struct App {
     theme: AppTheme,
     show_theme_menu: bool,
     theme_list_state: ListState,
+    relative: bool,
+    base_path: PathBuf,
 }
 
 fn main() -> std::io::Result<()> {
     let args = Args::parse();
+    let base_path = std::fs::canonicalize(&args.path).unwrap_or_else(|_| PathBuf::from(&args.path));
     let matcher = Nucleo::new(Config::DEFAULT, Arc::new(|| {}), None, 1);
     let injector = matcher.injector();
     let root = args.path.clone();
@@ -131,7 +137,12 @@ fn main() -> std::io::Result<()> {
             Box::new(move |result| {
                 if let Ok(entry) = result {
                     if entry.file_type().map(|f| f.is_file()).unwrap_or(false) {
-                        batch.push(entry.path().to_string_lossy().into_owned());
+                        if let Ok(abs_path) = std::fs::canonicalize(entry.path()) {
+                            batch.push(abs_path.to_string_lossy().into_owned());
+                        } else {
+                            batch.push(entry.path().to_string_lossy().into_owned());
+                        }
+
                         if batch.len() >= 5000 {
                             for path in batch.drain(..) {
                                 local_injector.push(path, |s, dst| {
@@ -162,9 +173,11 @@ fn main() -> std::io::Result<()> {
         preview_cache: Vec::new(),
         ps: SyntaxSet::load_defaults_newlines(),
         ts: ThemeSet::load_defaults(),
-        theme: AppTheme::catppuccin(), // default theme
+        theme: AppTheme::catppuccin(),
         show_theme_menu: false,
         theme_list_state: ListState::default(),
+        relative: args.relative,
+        base_path,
     };
 
     let result = app.run(&mut terminal);
@@ -214,16 +227,12 @@ impl App {
     }
 
     fn handle_input(&mut self, key: event::KeyEvent) {
-        // Check if Ctrl is the ONLY modifier being pressed
         let ctrl_only = key.modifiers == KeyModifiers::CONTROL;
 
-        // THEME MENU MODE
         if self.show_theme_menu {
             match key.code {
                 KeyCode::Esc => self.show_theme_menu = false,
-
                 KeyCode::Char('t') if ctrl_only => self.show_theme_menu = false,
-
                 KeyCode::Up => {
                     let i = self.theme_list_state.selected().unwrap_or(0);
                     self.theme_list_state.select(Some(i.saturating_sub(1)));
@@ -249,29 +258,24 @@ impl App {
             return;
         }
 
-        //  GLOBAL / SEARCH MODE
         match key.code {
             KeyCode::Esc => self.exit = true,
-
-            // Open Theme Menu: Ctrl + t
             KeyCode::Char('t') if ctrl_only => {
                 self.show_theme_menu = true;
                 self.theme_list_state.select(Some(0));
             }
-
-            // Toggle Preview: Ctrl + p
             KeyCode::Char('p') if ctrl_only => {
                 self.show_preview = !self.show_preview;
                 self.preview_scroll = 0;
             }
-
-            // Ctrl + u clears the input line
             KeyCode::Char('u') if ctrl_only => {
                 self.input.clear();
                 self.needs_reparse = true;
                 self.last_input_time = Instant::now();
             }
-
+            KeyCode::Char('r') if ctrl_only => {
+                self.relative = !self.relative;
+            }
             KeyCode::Enter => {
                 let snapshot = self.matcher.snapshot();
                 if let Some(i) = self.list_state.selected() {
@@ -283,7 +287,6 @@ impl App {
                     }
                 }
             }
-
             KeyCode::Up => {
                 if self.show_preview && self.preview_scroll > 0 {
                     self.preview_scroll = self.preview_scroll.saturating_sub(1);
@@ -292,7 +295,6 @@ impl App {
                     self.list_state.select(Some(i.saturating_sub(1)));
                 }
             }
-
             KeyCode::Down => {
                 if self.show_preview {
                     self.preview_scroll = self.preview_scroll.saturating_add(1);
@@ -304,34 +306,27 @@ impl App {
                     }
                 }
             }
-
             KeyCode::Char(c) => {
                 self.input.push(c);
                 self.needs_reparse = true;
                 self.last_input_time = Instant::now();
             }
-
             KeyCode::Backspace => {
                 self.input.pop();
                 self.needs_reparse = true;
                 self.last_input_time = Instant::now();
             }
-
             _ => {}
         }
     }
+
     fn update_search(&mut self) {
         let can_append = self.input.starts_with(&self.previous_input);
-
-        // Determine CaseMatching strategy:
-        // If there's any uppercase character, respect case.
-        // Otherwise, ignore it.
         let case_matching = if self.input.chars().any(|c| c.is_uppercase()) {
             nucleo::pattern::CaseMatching::Respect
         } else {
             nucleo::pattern::CaseMatching::Ignore
         };
-
         self.matcher.pattern.reparse(
             0,
             &self.input,
@@ -339,7 +334,6 @@ impl App {
             nucleo::pattern::Normalization::Smart,
             can_append,
         );
-
         self.previous_input = self.input.clone();
         self.last_selected_index = None;
         self.list_state.select(Some(0));
@@ -387,11 +381,35 @@ impl App {
         let items = snapshot
             .matched_items(0..matched.min(chunks[1].height as u32))
             .map(|item| {
-                let (icon, color) = self.get_icon_info(item.data.as_str());
-                ListItem::new(Line::from(vec![
-                    Span::styled(format!("{} ", icon), Style::default().fg(color)),
-                    Span::raw(item.data.as_str()).fg(t.fg),
-                ]))
+                let full_path = item.data.as_str();
+                let (icon, color) = self.get_icon_info(full_path);
+
+                let path_to_show = if self.relative {
+                    std::path::Path::new(full_path)
+                        .strip_prefix(&self.base_path)
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_else(|_| full_path.to_string())
+                } else {
+                    full_path.to_string()
+                };
+
+                let line = match path_to_show.rfind('/') {
+                    Some(idx) => {
+                        let dir = path_to_show[..idx + 1].to_string();
+                        let file = path_to_show[idx + 1..].to_string();
+                        Line::from(vec![
+                            Span::styled(format!("{} ", icon), Style::default().fg(color)),
+                            Span::styled(dir, Style::default().fg(t.matched_count)),
+                            Span::styled(file, Style::default().fg(t.fg).bold()),
+                        ])
+                    }
+                    None => Line::from(vec![
+                        Span::styled(format!("{} ", icon), Style::default().fg(color)),
+                        Span::styled(path_to_show, Style::default().fg(t.fg).bold()),
+                    ]),
+                };
+
+                ListItem::new(line)
             });
 
         let list = List::new(items)
@@ -408,7 +426,7 @@ impl App {
             Span::styled(
                 " ESC ",
                 Style::default()
-                    .bg(Color::Rgb(191, 97, 106)) // Red
+                    .bg(Color::Rgb(191, 97, 106))
                     .fg(Color::Black)
                     .bold(),
             ),
@@ -421,20 +439,36 @@ impl App {
             Span::styled(
                 " Ctrl-P ",
                 Style::default()
-                    .bg(Color::Rgb(235, 203, 139)) // Yellow/Orange
+                    .bg(Color::Rgb(235, 203, 139))
                     .fg(Color::Black)
                     .bold(),
             ),
             Span::raw(" Preview  ").fg(t.fg),
-            // Added Ctrl-U for Clear
             Span::styled(
                 " Ctrl-U ",
                 Style::default()
-                    .bg(Color::Rgb(180, 142, 173)) // Purple/Magenta
+                    .bg(Color::Rgb(180, 142, 173))
                     .fg(Color::Black)
                     .bold(),
             ),
-            Span::raw(" Clear ").fg(t.fg),
+            Span::raw(" Clear  ").fg(t.fg),
+            Span::styled(
+                " Ctrl-R ",
+                Style::default()
+                    .bg(if self.relative {
+                        Color::Green
+                    } else {
+                        Color::DarkGray
+                    })
+                    .fg(Color::Black)
+                    .bold(),
+            ),
+            Span::raw(if self.relative {
+                " Rel ON "
+            } else {
+                " Rel OFF "
+            })
+            .fg(t.fg),
         ]);
         frame.render_widget(Paragraph::new(footer).bg(t.footer_bg), chunks[2]);
 
