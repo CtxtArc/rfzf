@@ -1,96 +1,162 @@
-# Rust-FZF
+<div align="center">
 
-Rust-FZF is a terminal-based fuzzy finder written in Rust. It provides a text user interface (TUI) for discovering and selecting files, built on top of the `ignore` crate for concurrent traversal and `ratatui` for the interface. It supports multi-selection, live file previews, and direct shell command execution.
+# rfzf
 
-## Features
+**A fast, good-looking fuzzy file finder for the terminal, written in Rust.**
 
-* **Parallel Traversal**: Uses the `ignore` crate to scan directories across multiple threads while respecting `.gitignore`, `.ignore`, and hidden file rules.
-* **Shell Execution (`--exec`)**: Execute shell commands against selected files directly from the TUI. Supports standard shell syntax, including pipes and redirects.
-* **Multi-Selection**: Mark multiple files to batch process them through a command or print them as a list to standard output.
-* **Match Highlighting**: Real-time visual highlighting of fuzzy-matched characters within file paths.
-* **File Previews & Metadata**: Integrated preview pane featuring syntax highlighting, file size, Unix permissions, and modification timestamps.
-* **Case Matching**: Toggle between case-sensitive and smart-case matching during runtime.
-* **Theming**: Includes built-in color schemes (Nord, Dracula, Catppuccin) accessible via an in-app menu.
-* **Render Throttling**: Prioritizes UI responsiveness for user input while batching background discovery updates to minimize terminal flicker.
+Type a few letters, see matching files instantly, preview them with syntax highlighting, and run any shell command on what you pick.
 
-## Keybindings
+[![Rust](https://img.shields.io/badge/rust-2024_edition-orange?logo=rust)](https://www.rust-lang.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-lightgrey)
 
-| Key | Action |
-| --- | --- |
-| `Tab` | Toggle selection (Multi-select) |
-| `Enter` | Execute command on selection (or print to stdout) |
-| `Ctrl + p` | Toggle Preview pane and metadata sidebar |
-| `Ctrl + t` | Open Theme Selection menu |
-| `Ctrl + s` | Toggle Case Sensitivity |
-| `Ctrl + r` | Toggle Relative/Absolute path display |
-| `Ctrl + u` | Clear search input |
-| `Up / Down` | Navigate list (scrolls preview text when active) |
-| `Esc` | Quit |
+</div>
+
+---
+
+## Why rfzf?
+
+`rfzf` is a single-binary file picker in the spirit of [fzf](https://github.com/junegunn/fzf), focused on files. It walks your directory tree in parallel, feeds results into the same matching engine that powers the [Helix](https://helix-editor.com/) editor, and keeps the interface responsive while thousands of paths are still streaming in.
+
+- **Fast discovery.** Directories are scanned on up to 8 threads with the [`ignore`](https://crates.io/crates/ignore) crate (the walker behind ripgrep). `.gitignore`, `.ignore` and hidden files are respected by default.
+- **Fuzzy matching with [`nucleo`](https://crates.io/crates/nucleo).** Results update as you type, and narrowing a query reuses the previous match set instead of starting over.
+- **Live preview.** A preview pane shows the first 300 lines of the selected file with syntax highlighting, plus a sidebar with its size, last-modified time and Unix permissions.
+- **Run commands on your picks.** `--exec "nvim {}"` opens the file in your editor; any shell syntax works, including pipes and redirects.
+- **Multi-select.** Mark several files with `Tab` and handle them all at once.
+- **Themes.** Nord, Dracula and Catppuccin are built in and can be switched from inside the app.
+- **No flicker.** Keystrokes redraw immediately, while background updates from the file walker are batched to about 30 fps.
+
+## Installation
+
+You need a [Rust toolchain](https://rustup.rs/) (1.85 or newer, for the 2024 edition).
+
+**With cargo:**
+
+```bash
+cargo install --git https://github.com/CtxtArc/rfzf
+```
+
+**From source:**
+
+```bash
+git clone https://github.com/CtxtArc/rfzf
+cd rfzf
+cargo build --release
+sudo cp target/release/rfzf /usr/local/bin/
+```
+
+> [!TIP]
+> File-type icons use [Nerd Font](https://www.nerdfonts.com/) glyphs. Without a Nerd Font in your terminal they show up as empty boxes; everything else works normally.
 
 ## Usage
 
-### Basic Search
+```text
+rfzf [OPTIONS] [PATH]
+```
+
+| Option | Description |
+| --- | --- |
+| `PATH` | Directory to search (default: current directory) |
+| `-H`, `--hidden` | Include hidden files and directories |
+| `-p`, `--preview` | Start with the preview pane open |
+| `-r`, `--relative` | Show paths relative to `PATH` |
+| `-s`, `--sensitive` | Start in case-sensitive mode |
+| `-e`, `--exec <CMD>` | Command to run on each selected file; `{}` is replaced by the path |
+| `-h`, `--help` | Print help |
+| `-V`, `--version` | Print version |
+
+### Examples
 
 Search the current directory:
 
 ```bash
 rfzf
-
 ```
 
-Search a specific directory with hidden files and the preview pane enabled:
+Search your home directory, including dotfiles, with the preview open:
 
 ```bash
 rfzf ~ --hidden --preview
-
 ```
 
-### Command Execution (`--exec`)
-
-Pass selected files to standard terminal commands. The `{}` placeholder is replaced by the selected file path(s) and is safely escaped.
-
-Open a file in an editor:
+Open the chosen file in Neovim:
 
 ```bash
 rfzf --exec "nvim {}"
-
 ```
 
-Process file content through a pipeline:
+Use shell pipelines:
 
 ```bash
-rfzf --exec "grep 'TODO' {} | head -n 20"
-
+rfzf --exec "grep -n 'TODO' {} | head -n 20"
 ```
 
-Perform bulk file operations:
+Back up several files at once (select them with `Tab`, then press `Enter`):
 
 ```bash
-rfzf --exec "cp {} ~/backups/archive_$(date +%F)/"
-
+rfzf --exec "cp {} ~/backups/"
 ```
 
-## Installation
+### How `--exec` works
 
-### Prerequisites
+- `{}` is replaced by the selected path, wrapped in single quotes and escaped. Paths with spaces or quotes are safe.
+- The command runs through `sh -c`, so pipes, redirects, `&&` and `$(...)` all work.
+- With several files selected, the command runs **once per file**, one after another.
+- Without `--exec`, pressing `Enter` prints the selected path(s) once the interface closes.
 
-* [Rust toolchain](https://rustup.rs/)
+## Keybindings
 
-### Build from Source
+| Key | Action |
+| --- | --- |
+| *typing* | Update the search query |
+| `Up` / `Down` | Move through the results (scroll the preview while it is open) |
+| `Tab` / `Shift+Tab` | Select or deselect the highlighted file |
+| `Enter` | Run `--exec` on the selection, or print it |
+| `Ctrl+P` | Show or hide the preview pane |
+| `Ctrl+T` | Open the theme menu (`Up`/`Down` to pick, `Enter` to apply) |
+| `Ctrl+S` | Switch between case-insensitive and case-sensitive matching |
+| `Ctrl+R` | Switch between relative and absolute paths |
+| `Ctrl+U` | Clear the query |
+| `Backspace` | Delete the last character |
+| `Esc` | Quit (or close the theme menu) |
 
-```bash
-git clone https://github.com/skugge74/rust-fzf
-cd rust-fzf
-cargo build --release
+The footer shows the current selection count and the state of each toggle.
 
-# Move the binary to a location in your PATH
-sudo cp target/release/rust-fzf /usr/local/bin/rfzf
+## How it works
 
+```text
+┌──────────────┐  paths   ┌────────────────┐ snapshot ┌──────────────────┐
+│ ignore walker│ ───────▶ │ nucleo matcher │ ───────▶ │ ratatui renderer │
+│ (≤ 8 threads)│ injector │ (background)   │          │ + syntect preview│
+└──────────────┘          └────────────────┘          └──────────────────┘
+                                   ▲                           │
+                                   └──── query from keyboard ──┘
 ```
 
-## Technical Dependencies
+1. A background thread walks the tree with `ignore`'s parallel walker and pushes file paths into nucleo's injector.
+2. nucleo matches in the background; the UI loop calls `tick()` and reads a snapshot of the current results.
+3. The render loop draws right away on user input, about every 33 ms while results are still changing, and every 250 ms when idle.
+4. Query changes are debounced by 20 ms. When the new query extends the old one, nucleo only refines the existing matches.
+5. The preview is highlighted with `syntect` and cached until the selection changes.
 
-* **TUI Framework**: `ratatui`
-* **Fuzzy Engine**: `nucleo-matcher`
-* **Syntax Highlighting**: `syntect`
-* **Execution**: Commands are spawned via `sh -c`, enabling support for shell operators and logic.
+## Built with
+
+| Crate | Role |
+| --- | --- |
+| [`ratatui`](https://ratatui.rs/) + [`crossterm`](https://crates.io/crates/crossterm) | Terminal UI and input |
+| [`nucleo`](https://crates.io/crates/nucleo) | Fuzzy matching engine |
+| [`ignore`](https://crates.io/crates/ignore) | Parallel, gitignore-aware directory walking |
+| [`syntect`](https://crates.io/crates/syntect) | Syntax highlighting in the preview |
+| [`clap`](https://crates.io/crates/clap) | Command-line parsing |
+
+## Roadmap
+
+- [ ] Draw the TUI on `/dev/tty` so the output can be piped (`rfzf | xargs ...`, `vim $(rfzf)`)
+- [ ] Highlight matched characters in results
+- [ ] Smart-case matching mode
+- [ ] Configurable themes and keybindings
+- [ ] Directory search mode
+
+## License
+
+Released under the [MIT License](LICENSE).

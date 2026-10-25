@@ -3,7 +3,16 @@ name = "rust-fzf"
 version = "1.0.0"
 edition = "2024"
 license = "MIT"
-author = "dark0dex"
+authors = ["dark0dex"]
+description = "A fast terminal fuzzy file finder with live syntax-highlighted previews, multi-select and shell command execution"
+repository = "https://github.com/CtxtArc/rfzf"
+readme = "README.md"
+keywords = ["fuzzy", "finder", "tui", "cli", "fzf"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "rfzf"
+path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.5.60", features = ["derive"] }
